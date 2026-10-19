@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Chess } from "chess.js";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Chess, type Square } from "chess.js";
 import type {
   GameRecord,
   MoveRecord,
@@ -98,6 +98,15 @@ export function ChessCoachApp() {
   const [loadingGame, setLoadingGame] = useState<boolean>(false);
   const [refreshingCoach, setRefreshingCoach] = useState<boolean>(false);
 
+  // Interactive Sandbox / Variation exploration state in Review tab
+  const [sandboxFen, setSandboxFen] = useState<string | null>(null);
+  const [sandboxLastMove, setSandboxLastMove] = useState<{
+    from: string;
+    to: string;
+  } | null>(null);
+  const [sandboxMovesSan, setSandboxMovesSan] = useState<string[]>([]);
+  const [sandboxFeedback, setSandboxFeedback] = useState<string | null>(null);
+
   // Blunder Trainer state
   const [selectedPuzzleId, setSelectedPuzzleId] = useState<string | null>(null);
   const [puzzleFilterMotif, setPuzzleFilterMotif] = useState<string>("all");
@@ -114,10 +123,26 @@ export function ChessCoachApp() {
     to: string;
   } | null>(null);
   const [showHint, setShowHint] = useState<boolean>(false);
+  const replyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  const clearSandbox = useCallback(() => {
+    setSandboxFen(null);
+    setSandboxLastMove(null);
+    setSandboxMovesSan([]);
+    setSandboxFeedback(null);
+  }, []);
+
+  const selectPlyAndClearSandbox = useCallback(
+    (plyOrUpdater: number | ((prev: number) => number)) => {
+      clearSandbox();
+      setCurrentPly(plyOrUpdater);
+    },
+    [clearSandbox]
+  );
 
   const loadOverview = useCallback(
     async (keepGameSelection = true) => {
@@ -164,6 +189,7 @@ export function ChessCoachApp() {
     if (!selectedGameId) return;
     let cancelled = false;
     setLoadingGame(true);
+    clearSandbox();
     fetch(`/api/games/${selectedGameId}`)
       .then((r) => r.json())
       .then((data) => {
@@ -197,7 +223,7 @@ export function ChessCoachApp() {
     return () => {
       cancelled = true;
     };
-  }, [selectedGameId]);
+  }, [selectedGameId, clearSandbox]);
 
   const currentMove = useMemo(() => {
     if (moves.length === 0) return null;
@@ -216,8 +242,8 @@ export function ChessCoachApp() {
     );
     if (errors.length === 0) return;
     const next = errors.find((m) => m.ply > currentPly) || errors[0];
-    setCurrentPly(next.ply);
-  }, [moves, currentPly, selectedGame]);
+    selectPlyAndClearSandbox(next.ply);
+  }, [moves, currentPly, selectedGame, selectPlyAndClearSandbox]);
 
   const jumpToPrevError = useCallback(() => {
     if (!moves.length || !selectedGame) return;
@@ -232,8 +258,8 @@ export function ChessCoachApp() {
     const prev =
       [...errors].reverse().find((m) => m.ply < currentPly) ||
       errors[errors.length - 1];
-    setCurrentPly(prev.ply);
-  }, [moves, currentPly, selectedGame]);
+    selectPlyAndClearSandbox(prev.ply);
+  }, [moves, currentPly, selectedGame, selectPlyAndClearSandbox]);
 
   // Keyboard navigation in review view
   useEffect(() => {
@@ -247,21 +273,31 @@ export function ChessCoachApp() {
       }
       if (e.key === "ArrowRight") {
         e.preventDefault();
-        setCurrentPly((p) => Math.min(moves.length, p + 1));
+        selectPlyAndClearSandbox((p) => Math.min(moves.length, p + 1));
       } else if (e.key === "ArrowLeft") {
         e.preventDefault();
-        setCurrentPly((p) => Math.max(0, p - 1));
+        selectPlyAndClearSandbox((p) => Math.max(0, p - 1));
       } else if (e.key === "b" || e.key === "B") {
         e.preventDefault();
         jumpToNextError();
       } else if (e.key === "f" || e.key === "F") {
         e.preventDefault();
         setFlipped((f) => !f);
+      } else if (e.key === "Escape" && sandboxFen) {
+        e.preventDefault();
+        clearSandbox();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTab, moves.length, jumpToNextError]);
+  }, [
+    activeTab,
+    moves.length,
+    jumpToNextError,
+    selectPlyAndClearSandbox,
+    sandboxFen,
+    clearSandbox,
+  ]);
 
   const movePairs = useMemo(() => {
     const pairs: {
@@ -307,8 +343,15 @@ export function ChessCoachApp() {
     );
   }, [filteredPuzzles, selectedPuzzleId]);
 
+  const activePuzzleId = activePuzzle?.id || null;
+
+  // IMPORTANT: Depend only on activePuzzleId so background overview refreshes do NOT reset the board mid-solve!
   useEffect(() => {
     if (!activePuzzle) return;
+    if (replyTimerRef.current) {
+      clearTimeout(replyTimerRef.current);
+      replyTimerRef.current = null;
+    }
     setPuzzleFen(activePuzzle.target_fen);
     setPuzzleStatus("prompt");
     setPuzzleFeedback("");
@@ -322,8 +365,96 @@ export function ChessCoachApp() {
         : null
     );
     setShowHint(false);
-  }, [activePuzzle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePuzzleId]);
 
+  // Board states for Review tab
+  const boardOrientation: "white" | "black" = useMemo(() => {
+    const base = selectedGame?.user_color || "white";
+    if (!flipped) return base;
+    return base === "white" ? "black" : "white";
+  }, [selectedGame, flipped]);
+
+  const displayFen = useMemo(() => {
+    if (!moves.length) {
+      return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    }
+    if (currentPly <= 0) {
+      return moves[0].fen_before;
+    }
+    return currentMove?.fen_after || moves[0].fen_before;
+  }, [moves, currentPly, currentMove]);
+
+  const activeReviewFen = sandboxFen ?? displayFen;
+
+  // Interactive move handler on the 01 / POST-MORTEM board
+  const handleReviewBoardMove = useCallback(
+    (from: string, to: string, promotion?: string): boolean => {
+      const chess = new Chess(activeReviewFen);
+      let moveObj = null;
+      try {
+        const piece = chess.get(from as Square);
+        const isPromo =
+          piece &&
+          piece.type === "p" &&
+          ((piece.color === "w" && to[1] === "8") ||
+            (piece.color === "b" && to[1] === "1"));
+        moveObj = chess.move(
+          isPromo ? { from, to, promotion: promotion || "q" } : { from, to }
+        );
+      } catch {
+        return false;
+      }
+      if (!moveObj) return false;
+
+      const playedUci = `${from}${to}${moveObj.promotion || ""}`.toLowerCase();
+
+      // 1. If we're on the main game line and the user played the exact next move from the game, advance currentPly!
+      if (!sandboxFen) {
+        const nextGameMove = moves.find((m) => m.ply === currentPly + 1);
+        if (nextGameMove && nextGameMove.uci.toLowerCase() === playedUci) {
+          setCurrentPly(nextGameMove.ply);
+          return true;
+        }
+      }
+
+      // 2. Check if the user is testing a move from currentMove.fen_before (e.g. "Rewind & Try Move")
+      let feedbackMsg = `VARIATION EXPLORATION: Played ${moveObj.san}. Drag pieces for either side to explore or click [RETURN TO GAME] to exit.`;
+      if (currentMove && activeReviewFen === currentMove.fen_before) {
+        if (
+          playedUci === currentMove.best_move_uci?.toLowerCase() ||
+          moveObj.san === currentMove.best_move_san
+        ) {
+          feedbackMsg = `✓ ENGINE BEST FOUND: ${moveObj.san} is Stockfish's #1 continuation (${currentMove.best_line_san || moveObj.san}) instead of ${currentMove.san}!`;
+        } else if (
+          playedUci === currentMove.uci?.toLowerCase() ||
+          moveObj.san === currentMove.san
+        ) {
+          feedbackMsg = `⚠ IN-GAME MOVE REPEATED: ${moveObj.san} was the move played in the match (${currentMove.classification.toUpperCase()}). Best was ${currentMove.best_move_san}.`;
+        } else {
+          feedbackMsg = `VARIATION: Played ${moveObj.san} (Stockfish's #1 recommendation from that position was ${currentMove.best_move_san}).`;
+        }
+      } else if (sandboxFen === null) {
+        const nextGameMove = moves.find((m) => m.ply === currentPly + 1);
+        if (
+          nextGameMove &&
+          (playedUci === nextGameMove.best_move_uci?.toLowerCase() ||
+            moveObj.san === nextGameMove.best_move_san)
+        ) {
+          feedbackMsg = `✓ ENGINE BEST FOUND FOR PLY ${nextGameMove.ply}: ${moveObj.san} matches Stockfish's #1 move (in-game move was ${nextGameMove.san}).`;
+        }
+      }
+
+      setSandboxFen(chess.fen());
+      setSandboxLastMove({ from, to });
+      setSandboxMovesSan((prev) => [...prev, moveObj.san]);
+      setSandboxFeedback(feedbackMsg);
+      return true;
+    },
+    [activeReviewFen, sandboxFen, moves, currentPly, currentMove]
+  );
+
+  // Interactive move handler on the 02 / DRILL DECK board
   const handlePuzzleMove = async (
     from: string,
     to: string,
@@ -334,7 +465,15 @@ export function ChessCoachApp() {
     const chess = new Chess(puzzleFen);
     let moveObj = null;
     try {
-      moveObj = chess.move({ from, to, promotion });
+      const piece = chess.get(from as Square);
+      const isPromo =
+        piece &&
+        piece.type === "p" &&
+        ((piece.color === "w" && to[1] === "8") ||
+          (piece.color === "b" && to[1] === "1"));
+      moveObj = chess.move(
+        isPromo ? { from, to, promotion } : { from, to }
+      );
     } catch {
       return false;
     }
@@ -368,7 +507,8 @@ export function ChessCoachApp() {
       candidateUci.toLowerCase() !== activePuzzle.played_move_uci?.toLowerCase();
 
     if (isExactBest || isCloseAlternative) {
-      setPuzzleFen(chess.fen());
+      const afterUserMoveFen = chess.fen();
+      setPuzzleFen(afterUserMoveFen);
       setPuzzleLastMove({ from, to });
       setPuzzleStatus("solved");
       setPuzzleFeedback(
@@ -381,10 +521,11 @@ export function ChessCoachApp() {
         const tokens = activePuzzle.solution_line_san
           .split(" ")
           .filter(Boolean);
-        if (tokens.length > 1) {
-          setTimeout(() => {
+        if (tokens.length > 1 && isExactBest) {
+          if (replyTimerRef.current) clearTimeout(replyTimerRef.current);
+          replyTimerRef.current = setTimeout(() => {
             try {
-              const replyChess = new Chess(chess.fen());
+              const replyChess = new Chess(afterUserMoveFen);
               const reply = replyChess.move(tokens[1]);
               if (reply) {
                 setPuzzleFen(replyChess.fen());
@@ -413,8 +554,8 @@ export function ChessCoachApp() {
       setPuzzleStatus("wrong");
       setPuzzleFeedback(
         playedSameBlunder
-          ? `REJECTED: YOU REPEATED YOUR IN-GAME BLUNDER (${activePuzzle.played_move_san}). INTERROGATE THE POSITION AGAIN.`
-          : `SUBOPTIMAL: ${moveObj.san} MISSES THE CRITICAL IDEA. LOOK FOR A STRONGER CONTINUATION.`
+          ? `REJECTED: YOU REPEATED YOUR IN-GAME BLUNDER (${activePuzzle.played_move_san}). PIECE SNAPPED BACK — TRY AGAIN.`
+          : `SUBOPTIMAL: ${moveObj.san} MISSES THE CRITICAL CONTINUATION. PIECE SNAPPED BACK — TRY AGAIN.`
       );
       return false;
     }
@@ -486,23 +627,6 @@ export function ChessCoachApp() {
     }
   };
 
-  // Board states for Review tab
-  const boardOrientation: "white" | "black" = useMemo(() => {
-    const base = selectedGame?.user_color || "white";
-    if (!flipped) return base;
-    return base === "white" ? "black" : "white";
-  }, [selectedGame, flipped]);
-
-  const displayFen = useMemo(() => {
-    if (!moves.length) {
-      return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-    }
-    if (currentPly <= 0) {
-      return moves[0].fen_before;
-    }
-    return currentMove?.fen_after || moves[0].fen_before;
-  }, [moves, currentPly, currentMove]);
-
   const bestContinuationFen = useMemo(() => {
     if (!currentMove?.fen_before || !currentMove?.best_move_san) {
       return displayFen;
@@ -517,21 +641,23 @@ export function ChessCoachApp() {
   }, [currentMove, displayFen]);
 
   const lastMoveSquares = useMemo(() => {
+    if (sandboxLastMove) return sandboxLastMove;
     if (!currentMove?.uci || currentMove.uci.length < 4) return null;
     return {
       from: currentMove.uci.slice(0, 2),
       to: currentMove.uci.slice(2, 4),
     };
-  }, [currentMove]);
+  }, [currentMove, sandboxLastMove]);
 
   const bestMoveSquares = useMemo(() => {
+    if (sandboxFen) return null;
     if (!currentMove?.best_move_uci || currentMove.best_move_uci.length < 4)
       return null;
     return {
       from: currentMove.best_move_uci.slice(0, 2),
       to: currentMove.best_move_uci.slice(2, 4),
     };
-  }, [currentMove]);
+  }, [currentMove, sandboxFen]);
 
   const evalGaugeWhitePct = useMemo(() => {
     if (!currentMove) return 50;
@@ -953,34 +1079,72 @@ export function ChessCoachApp() {
             {/* ZONE 02: INSTRUMENT STAGE (5 cols) */}
             <section className="lg:col-span-5 flex flex-col justify-between bg-paper-raised">
               {/* Stage Subheader */}
-              <div className="px-4 py-2 border-b border-rule-strong bg-paper-sunken flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.16em]">
+              <div className="px-4 py-2 border-b border-rule-strong bg-paper-sunken flex flex-wrap items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-[0.16em]">
                 <span className="font-semibold">
                   02 / INSTRUMENT STAGE ({boardOrientation.toUpperCase()} POV)
                 </span>
-                <div className="flex items-center border border-rule-strong divide-x divide-rule-strong">
-                  <button
-                    onClick={() => setStageMode("single")}
-                    className={`px-2 py-0.5 font-semibold ${
-                      stageMode === "single"
-                        ? "bg-ink text-paper"
-                        : "bg-paper text-ink-muted hover:text-ink"
-                    }`}
-                  >
-                    SINGLE
-                  </button>
-                  <button
-                    onClick={() => setStageMode("split")}
-                    className={`px-2 py-0.5 font-semibold ${
-                      stageMode === "split"
-                        ? "bg-ink text-paper"
-                        : "bg-paper text-ink-muted hover:text-ink"
-                    }`}
-                    title="Compare Your Move vs. Stockfish Best Continuation Side-by-Side"
-                  >
-                    SPLIT DIFF
-                  </button>
+                <div className="flex items-center gap-1.5">
+                  {isUserMove &&
+                    (currentMove.classification === "blunder" ||
+                      currentMove.classification === "mistake") &&
+                    sandboxFen !== currentMove.fen_before && (
+                      <button
+                        onClick={() => {
+                          setSandboxFen(currentMove.fen_before);
+                          setSandboxLastMove(null);
+                          setSandboxMovesSan([]);
+                          setSandboxFeedback(
+                            `REWINDED BEFORE ${currentMove.san}?? — Drag your ${selectedGame?.user_color} piece on the board to test a better continuation!`
+                          );
+                        }}
+                        className="px-2 py-0.5 border border-rule-strong bg-amber-soft text-amber font-bold hover:bg-ink hover:text-paper transition-colors"
+                      >
+                        ↺ TRY BEFORE BLUNDER
+                      </button>
+                    )}
+
+                  <div className="flex items-center border border-rule-strong divide-x divide-rule-strong">
+                    <button
+                      onClick={() => setStageMode("single")}
+                      className={`px-2 py-0.5 font-semibold ${
+                        stageMode === "single"
+                          ? "bg-ink text-paper"
+                          : "bg-paper text-ink-muted hover:text-ink"
+                      }`}
+                    >
+                      SINGLE
+                    </button>
+                    <button
+                      onClick={() => setStageMode("split")}
+                      className={`px-2 py-0.5 font-semibold ${
+                        stageMode === "split"
+                          ? "bg-ink text-paper"
+                          : "bg-paper text-ink-muted hover:text-ink"
+                      }`}
+                      title="Compare Your Move vs. Stockfish Best Continuation Side-by-Side"
+                    >
+                      SPLIT DIFF
+                    </button>
+                  </div>
                 </div>
               </div>
+
+              {/* Sandbox Banner when exploring custom moves on the board */}
+              {sandboxFen && (
+                <div className="px-4 py-1.5 border-b border-rule-strong bg-green-soft text-green font-mono text-[11px] flex items-center justify-between gap-2">
+                  <span className="truncate font-semibold">
+                    {sandboxMovesSan.length > 0
+                      ? `SANDBOX LINE: ${sandboxMovesSan.join(" → ")}`
+                      : "INTERACTIVE TEST MODE: DRAG A PIECE TO MOVE"}
+                  </span>
+                  <button
+                    onClick={clearSandbox}
+                    className="px-2 py-0.5 bg-ink text-paper text-[10px] uppercase font-bold shrink-0"
+                  >
+                    RETURN TO GAME PLY
+                  </button>
+                </div>
+              )}
 
               {/* Top Player Bar */}
               <div className="px-4 py-2.5 border-b border-rule-strong flex items-center justify-between font-mono text-xs bg-paper">
@@ -1019,9 +1183,10 @@ export function ChessCoachApp() {
                     </div>
                     <div className="flex-1">
                       <Board
-                        fen={displayFen}
+                        fen={activeReviewFen}
                         orientation={boardOrientation}
-                        interactive={false}
+                        interactive={true}
+                        onPieceDrop={handleReviewBoardMove}
                         lastMove={lastMoveSquares}
                         highlightMove={
                           isUserMove &&
@@ -1048,9 +1213,10 @@ export function ChessCoachApp() {
                         </span>
                       </div>
                       <Board
-                        fen={displayFen}
+                        fen={activeReviewFen}
                         orientation={boardOrientation}
-                        interactive={false}
+                        interactive={true}
+                        onPieceDrop={handleReviewBoardMove}
                         lastMove={lastMoveSquares}
                       />
                     </div>
@@ -1100,14 +1266,16 @@ export function ChessCoachApp() {
               {/* 5-Cell Structural Transport Bar */}
               <div className="grid grid-cols-5 border-t-2 border-rule-strong divide-x divide-rule-strong font-mono text-xs bg-paper-raised">
                 <button
-                  onClick={() => setCurrentPly(0)}
+                  onClick={() => selectPlyAndClearSandbox(0)}
                   className="py-2.5 hover:bg-ink hover:text-paper transition-colors font-bold"
                   title="Jump to Start"
                 >
                   |◀
                 </button>
                 <button
-                  onClick={() => setCurrentPly((p) => Math.max(0, p - 1))}
+                  onClick={() =>
+                    selectPlyAndClearSandbox((p) => Math.max(0, p - 1))
+                  }
                   className="py-2.5 hover:bg-ink hover:text-paper transition-colors font-bold"
                   title="Previous Ply (←)"
                 >
@@ -1115,7 +1283,9 @@ export function ChessCoachApp() {
                 </button>
                 <button
                   onClick={() =>
-                    setCurrentPly((p) => Math.min(moves.length, p + 1))
+                    selectPlyAndClearSandbox((p) =>
+                      Math.min(moves.length, p + 1)
+                    )
                   }
                   className="py-2.5 hover:bg-ink hover:text-paper transition-colors font-bold"
                   title="Next Ply (→)"
@@ -1123,7 +1293,7 @@ export function ChessCoachApp() {
                   NEXT ▶
                 </button>
                 <button
-                  onClick={() => setCurrentPly(moves.length)}
+                  onClick={() => selectPlyAndClearSandbox(moves.length)}
                   className="py-2.5 hover:bg-ink hover:text-paper transition-colors font-bold"
                   title="Jump to End"
                 >
@@ -1147,12 +1317,18 @@ export function ChessCoachApp() {
                   moves={moves}
                   userColor={selectedGame?.user_color || "white"}
                   currentPly={currentPly}
-                  onSelectPly={(ply) => setCurrentPly(ply)}
+                  onSelectPly={(ply) => selectPlyAndClearSandbox(ply)}
                 />
               </div>
 
               {/* Coach Diagnostic Readout */}
               <div className="p-4 bg-paper">
+                {sandboxFeedback && (
+                  <div className="mb-3 p-2.5 border border-rule-strong bg-paper-raised font-mono text-xs text-ink">
+                    {sandboxFeedback}
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between gap-2 pb-2 mb-2.5 border-b border-rule">
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs font-bold uppercase">
@@ -1266,8 +1442,8 @@ export function ChessCoachApp() {
                   </>
                 ) : (
                   <p className="font-mono text-xs text-ink-muted">
-                    USE ARROW KEYS (← / →) OR PRESS [B] TO JUMP DIRECTLY TO YOUR
-                    FIRST CRITICAL BLUNDER.
+                    USE ARROW KEYS (← / →), DRAG PIECES ON THE BOARD, OR PRESS
+                    [B] TO JUMP DIRECTLY TO YOUR FIRST CRITICAL BLUNDER.
                   </p>
                 )}
               </div>
@@ -1315,7 +1491,7 @@ export function ChessCoachApp() {
                         return (
                           <button
                             key={m.ply}
-                            onClick={() => setCurrentPly(m.ply)}
+                            onClick={() => selectPlyAndClearSandbox(m.ply)}
                             className={`col-span-5 px-2.5 py-1.5 text-left flex items-center justify-between transition-colors ${
                               isSelected
                                 ? "bg-ink text-paper font-bold"
@@ -1512,10 +1688,25 @@ export function ChessCoachApp() {
                     </button>
                     <button
                       onClick={() => {
+                        if (replyTimerRef.current) {
+                          clearTimeout(replyTimerRef.current);
+                          replyTimerRef.current = null;
+                        }
                         setPuzzleFen(activePuzzle.target_fen);
                         setPuzzleStatus("prompt");
                         setPuzzleFeedback("");
-                        setPuzzleLastMove(null);
+                        setPuzzleLastMove(
+                          activePuzzle.opponent_move_uci &&
+                            activePuzzle.opponent_move_uci.length >= 4
+                            ? {
+                                from: activePuzzle.opponent_move_uci.slice(
+                                  0,
+                                  2
+                                ),
+                                to: activePuzzle.opponent_move_uci.slice(2, 4),
+                              }
+                            : null
+                        );
                       }}
                       className="py-2 border border-rule-strong bg-paper hover:bg-paper-sunken font-bold uppercase"
                     >
@@ -1571,7 +1762,7 @@ export function ChessCoachApp() {
                     }`}
                   >
                     {puzzleFeedback ||
-                      `DRAG A ${activePuzzle.user_color.toUpperCase()} PIECE ON THE BOARD TO REPLACE YOUR IN-GAME BLUNDER (${activePuzzle.played_move_san}??).`}
+                      `DRAG OR CLICK A ${activePuzzle.user_color.toUpperCase()} PIECE ON THE BOARD TO REPLACE YOUR IN-GAME BLUNDER (${activePuzzle.played_move_san}??).`}
                   </div>
 
                   {/* Explanation */}
@@ -1598,7 +1789,10 @@ export function ChessCoachApp() {
                   onClick={() => {
                     setSelectedGameId(activePuzzle.game_id);
                     setActiveTab("review");
-                    setTimeout(() => setCurrentPly(activePuzzle.ply), 120);
+                    setTimeout(
+                      () => selectPlyAndClearSandbox(activePuzzle.ply),
+                      120
+                    );
                   }}
                   className="w-full py-2.5 border border-rule-strong bg-paper-raised hover:bg-ink hover:text-paper font-mono text-xs uppercase tracking-widest font-bold transition-colors"
                 >
