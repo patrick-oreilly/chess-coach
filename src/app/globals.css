@@ -1,0 +1,192 @@
+@import "tailwindcss";
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --shell-bg: #13202e;
+  --shell-fg: #f4f1ea;
+  --shell-mute: #9eb2c7;
+  --shell-border: #283c52;
+  --shell-accent: #d9482b;
+
+  --paper: #f3efe6;
+  --paper-raised: #fbf9f4;
+  --paper-sunken: #e6dfd0;
+  --ink: #141a22;
+  --ink-soft: #2e3846;
+  --ink-mute: #505c6b; /* >= 5.7:1 contrast on --paper */
+  --rule: #cfc7b4;
+  --rule-strong: #141a22;
+
+  --blue: #1845c4;
+  --blue-soft: #dfe9fc;
+  --blue-text: #12369c;
+
+  --green: #126341;
+  --green-soft: #daf0e5;
+  --green-text: #0c4f33;
+
+  --amber: #9e4f00;
+  --amber-soft: #fbead1;
+  --amber-text: #783b00;
+
+  --red: #b83218;
+  --red-soft: #fae3de;
+  --red-text: #8f220c;
+
+  --sq-light: #eae3d4;
+  --sq-dark: #74889c;
+  --font-display: var(--font-serif), Georgia, serif;
+  --font-code: var(--font-mono), ui-monospace, monospace;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --shell-bg: #090d13;
+  --shell-fg: #f1f5f9;
+  --shell-mute: #94a3b8;
+  --shell-border: #263244;
+  --shell-accent: #e05336;
+
+  --paper: #0e131b;
+  --paper-raised: #141b26;
+  --paper-sunken: #0a0e14;
+  --ink: #f1f5f9;
+  --ink-soft: #cbd5e1;
+  --ink-mute: #94a3b8;
+  --rule: #243042;
+  --rule-strong: #475569;
+
+  --blue: #3b82f6;
+  --blue-soft: #172a4a;
+  --blue-text: #93c5fd;
+
+  --green: #10b981;
+  --green-soft: #0f2e25;
+  --green-text: #6ee7b7;
+
+  --amber: #f59e0b;
+  --amber-soft: #33220a;
+  --amber-text: #fcd34d;
+
+  --red: #f43f5e;
+  --red-soft: #38141e;
+  --red-text: #fda4af;
+
+  --sq-light: #3d4655;
+  --sq-dark: #212733;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-paper-sunken: var(--paper-sunken);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-mute: var(--ink-mute);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+  --color-blue: var(--blue);
+  --color-blue-soft: var(--blue-soft);
+  --color-blue-text: var(--blue-text);
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
+  --color-green-text: var(--green-text);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-amber-text: var(--amber-text);
+  --color-red: var(--red);
+  --color-red-soft: var(--red-soft);
+  --color-red-text: var(--red-text);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-code);
+  --font-serif: var(--font-display);
+}
+
+html {
+  scrollbar-color: var(--ink-mute) var(--paper-sunken);
+}
+
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  caret-color: var(--red);
+  accent-color: var(--ink);
+}
+
+.font-display-world {
+  font-family: var(--font-display);
+}
+
+.font-code-world {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Chessground board styling — Swiss Survey Sandstone & Slate */
+.chess-board cg-board {
+  background-color: var(--sq-light);
+  background-image: repeating-conic-gradient(var(--sq-dark) 0 25%, var(--sq-light) 0 50%);
+  background-size: 25% 25%;
+}
+
+.chess-board cg-board square.last-move {
+  background-color: rgba(24, 69, 196, 0.28);
+}
+
+.chess-board cg-board square.move-dest {
+  background: radial-gradient(rgba(18, 99, 65, 0.6) 19%, transparent 20%);
+}
+
+.chess-board cg-board square.oc.move-dest {
+  background: radial-gradient(transparent 0%, transparent 79%, rgba(18, 99, 65, 0.52) 80%);
+}
+
+.chess-board cg-board square.check {
+  background: radial-gradient(ellipse at center, rgba(184, 50, 24, 0.9) 0%, rgba(184, 50, 24, 0.25) 60%, transparent 80%);
+}
+
+.chess-board .cg-wrap coords {
+  color: var(--ink);
+  font-family: var(--font-code);
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.82;
+}
+
+.chess-board .cg-wrap coords.files {
+  left: 0;
+  bottom: 1px;
+}
+
+.chess-board .cg-wrap coords.files coord {
+  text-align: right;
+  padding-right: 4px;
+}
+
+.chess-board .cg-wrap coords.ranks {
+  left: 4px;
+  top: 2px;
+}
+
+.chess-board .cg-wrap coords.ranks coord {
+  transform: none;
+}

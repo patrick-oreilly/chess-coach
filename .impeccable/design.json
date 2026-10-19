@@ -1,0 +1,35 @@
+{
+  "name": "1.f4 // Chess Coach — Swiss Brutalist Instrument Grid",
+  "style": "swiss-brutalist-instrument-grid",
+  "polarity": "dual-high-craft-light-default",
+  "tokens": {
+    "radius": "0px",
+    "borderWidth": "1px",
+    "structuralBorderWidth": "2px",
+    "light": {
+      "paper": "#f3efe6",
+      "paperRaised": "#fbf9f4",
+      "paperSunken": "#e6dfd0",
+      "ink": "#141a22",
+      "inkMuted": "#4a525d",
+      "inkFaint": "#7c8490",
+      "rule": "#cfc6b4",
+      "ruleStrong": "#141a22",
+      "red": "#b83218",
+      "amber": "#9e5808",
+      "green": "#126341"
+    },
+    "dark": {
+      "paper": "#11151c",
+      "paperRaised": "#171c26",
+      "paperSunken": "#0b0e13",
+      "ink": "#ece7dc",
+      "ruleStrong": "#3b4556"
+    },
+    "typography": {
+      "display": "STIX Two Text",
+      "mono": "IBM Plex Mono",
+      "sans": "Geist"
+    }
+  }
+}
